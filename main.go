@@ -190,6 +190,12 @@ func getClient() *twitter.Client {
 }
 
 func main() {
+	envs := []string{`TWITTER_CONSUMER_KEY`, `TWITTER_CONSUMER_SECRET`, `TWITTER_ACCESS_TOKEN`, `TWITTER_ACCESS_TOKEN_SECRET`}
+	for _, key := range envs {
+		if os.Getenv(key) == `` {
+			log.Fatal(fmt.Errorf(`You must set environmental variable named %s`, key))
+		}
+	}
 	args := os.Args
 	if len(args) != 2 {
 		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [trend/timeline]`))
