@@ -12,8 +12,10 @@ import (
 
 const (
 	WOEID        int64  = 1118285 //Tokyo
-	XML_TREND    string = `/var/www/html/trend.xml`
-	XML_TIMELINE string = `/var/www/html/timeline.xml`
+	XML_SEARCH   string = `/home/pi/twitterRSS/search.xml`
+	XML_TREND    string = `/home/pi/twitterRSS/trend.xml`
+	XML_TIMELINE string = `/home/pi/twitterRSS/timeline.xml`
+	USAGE        string = `Usage: ./twitterRSS [trend/timeline] or [search string]`
 )
 
 type RSS struct {
@@ -120,6 +122,45 @@ func getTrendRSS(client *twitter.Client, woeid int64) RSS {
 	}
 }
 
+func RSSItemFromTweet(tweet *twitter.Tweet) *RSSItem {
+	uname := tweet.User.Name
+	sname := tweet.User.ScreenName
+	// Get a user profile image
+	images := make([]*RSSImage, 0, 0)
+	images = append(images, &RSSImage{
+		url:   tweet.User.ProfileImageURL,
+		title: sname,
+	})
+	// Read ExtendedEntities, if exist.
+	if tweet.ExtendedEntities != nil {
+		if _images := tweet.ExtendedEntities.Media; len(_images) > 0 {
+			for _, image := range _images {
+				images = append(images, &RSSImage{
+					url:   image.MediaURL,
+					title: sname,
+				})
+			}
+		}
+	} else {
+		// Read Entities only if ExtendedEntities does not exist.
+		if images1 := tweet.Entities.Media; len(images1) > 0 {
+			for _, image := range images1 {
+				images = append(images, &RSSImage{
+					url:   image.MediaURL,
+					title: sname,
+				})
+			}
+		}
+	}
+	return &RSSItem{
+		title:       sname + `@` + uname,
+		link:        fmt.Sprintf(`https://twitter.com/%s/status/%d`, sname, tweet.ID),
+		description: tweet.FullText,
+		pubDate:     tweet.CreatedAt,
+		images:      images,
+	}
+}
+
 func getTimelineRSS(client *twitter.Client, count int) RSS {
 	tweets, _, err := client.Timelines.HomeTimeline(
 		&twitter.HomeTimelineParams{
@@ -132,42 +173,7 @@ func getTimelineRSS(client *twitter.Client, count int) RSS {
 
 	items := make([]*RSSItem, count, count)
 	for i, tweet := range tweets {
-		uname := tweet.User.Name
-		sname := tweet.User.ScreenName
-		// Get images
-		images := make([]*RSSImage, 0, 0)
-		images = append(images, &RSSImage{
-			url:   tweet.User.ProfileImageURL,
-			title: sname,
-		})
-		// Read ExtendedEntities if exists.
-		if tweet.ExtendedEntities != nil {
-			if images2 := tweet.ExtendedEntities.Media; len(images2) > 0 {
-				for _, image := range images2 {
-					images = append(images, &RSSImage{
-						url:   image.MediaURL,
-						title: sname,
-					})
-				}
-			}
-		} else {
-			// Read Entities only if ExtendedEntities does not exist.
-			if images1 := tweet.Entities.Media; len(images1) > 0 {
-				for _, image := range images1 {
-					images = append(images, &RSSImage{
-						url:   image.MediaURL,
-						title: sname,
-					})
-				}
-			}
-		}
-		items[i] = &RSSItem{
-			title:       sname + `@` + uname,
-			link:        fmt.Sprintf(`https://twitter.com/%s/status/%d`, sname, tweet.ID),
-			description: tweet.FullText,
-			pubDate:     tweet.CreatedAt,
-			images:      images,
-		}
+		items[i] = RSSItemFromTweet(&tweet)
 	}
 	return RSS{
 		title:       `Twitter HomeTimeline`,
@@ -175,6 +181,30 @@ func getTimelineRSS(client *twitter.Client, count int) RSS {
 		description: `Twitter HomeTimeline`,
 		items:       items,
 		href:        os.Getenv(`TWITTER_DOMAIN`) + `timeline`,
+	}
+}
+
+func getSearchRSS(client *twitter.Client, s string, count int) RSS {
+	search, _, err := client.Search.Tweets(
+		&twitter.SearchTweetParams{
+			Count:     count,
+			TweetMode: `extended`,
+			Query:     s,
+		})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	items := make([]*RSSItem, count, count)
+	for i, tweet := range search.Statuses {
+		items[i] = RSSItemFromTweet(&tweet)
+	}
+	return RSS{
+		title:       fmt.Sprintf(`Twitter Search (%s)`, s),
+		link:        `https://twitter.com`,
+		description: fmt.Sprintf(`Twitter Search (%s)`, s),
+		items:       items,
+		href:        os.Getenv(`TWITTER_DOMAIN`) + `search/` + s,
 	}
 }
 
@@ -193,12 +223,12 @@ func main() {
 	envs := []string{`TWITTER_CONSUMER_KEY`, `TWITTER_CONSUMER_SECRET`, `TWITTER_ACCESS_TOKEN`, `TWITTER_ACCESS_TOKEN_SECRET`}
 	for _, key := range envs {
 		if os.Getenv(key) == `` {
-			log.Fatal(fmt.Errorf(`You must set environmental variable named %s`, key))
+			log.Fatal(fmt.Errorf(`Error! Environmental variable named %s must be set to use REST API`, key))
 		}
 	}
 	args := os.Args
-	if len(args) != 2 {
-		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [trend/timeline]`))
+	if len(args) < 2 {
+		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [trend/timeline] or [search string]`))
 	}
 	client := getClient()
 	var file *os.File
@@ -206,13 +236,25 @@ func main() {
 	var err error
 	switch args[1] {
 	case `trend`:
+		if len(args) != 2 {
+			log.Fatal(fmt.Errorf(USAGE))
+		}
 		rss = getTrendRSS(client, WOEID)
 		file, err = os.Create(XML_TREND)
 	case `timeline`:
+		if len(args) != 2 {
+			log.Fatal(fmt.Errorf(USAGE))
+		}
 		rss = getTimelineRSS(client, 200)
 		file, err = os.Create(XML_TIMELINE)
+	case `search`:
+		if len(args) != 3 {
+			log.Fatal(fmt.Errorf(USAGE))
+		}
+		rss = getSearchRSS(client, args[2], 200)
+		file, err = os.Create(strings.Replace(XML_SEARCH, `.xml`, ``, -1) + `_` + args[2] + `.xml`)
 	default:
-		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [trend/timeline]`))
+		log.Fatal(fmt.Errorf(USAGE))
 	}
 	if err != nil {
 		log.Fatal(err)
