@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
@@ -10,12 +11,13 @@ import (
 	"time"
 )
 
+var (
+	outOpt = flag.String("o", "", "output")
+)
+
 const (
-	WOEID        int64  = 1118285 //Tokyo
-	XML_SEARCH   string = `/home/pi/twitterRSS/search.xml`
-	XML_TREND    string = `/home/pi/twitterRSS/trend.xml`
-	XML_TIMELINE string = `/home/pi/twitterRSS/timeline.xml`
-	USAGE        string = `Usage: ./twitterRSS [trend/timeline] or [search string]`
+	WOEID int64  = 1118285 //Tokyo
+	USAGE string = `Usage: ./twitterRSS [trend/timeline] or [search string]`
 )
 
 type RSS struct {
@@ -153,7 +155,8 @@ func RSSItemFromTweet(tweet *twitter.Tweet) *RSSItem {
 		}
 	}
 	return &RSSItem{
-		title:       sname + `@` + uname,
+		//title:       sname + `@` + uname,
+		title:       uname + `@` + sname,
 		link:        fmt.Sprintf(`https://twitter.com/%s/status/%d`, sname, tweet.ID),
 		description: tweet.FullText,
 		pubDate:     tweet.CreatedAt,
@@ -184,12 +187,12 @@ func getTimelineRSS(client *twitter.Client, count int) RSS {
 	}
 }
 
-func getSearchRSS(client *twitter.Client, s string, count int) RSS {
+func getSearchRSS(client *twitter.Client, s string, count int, opts []string) RSS {
 	search, _, err := client.Search.Tweets(
 		&twitter.SearchTweetParams{
 			Count:     count,
 			TweetMode: `extended`,
-			Query:     s,
+			Query:     s + ` ` + strings.Join(opts, ` `),
 		})
 	if err != nil {
 		log.Fatal(err)
@@ -226,39 +229,49 @@ func main() {
 			log.Fatal(fmt.Errorf(`Error! Environmental variable named %s must be set to use REST API`, key))
 		}
 	}
-	args := os.Args
-	if len(args) < 2 {
-		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [trend/timeline] or [search string]`))
+
+	flag.Parse()
+	//args := os.Args
+	args := flag.Args()
+	if len(args) < 1 {
+		log.Fatal(fmt.Errorf(`Usage: ./twitterRSS [-o output] [trend, timeline, search string]`))
 	}
 	client := getClient()
-	var file *os.File
 	var rss RSS
 	var err error
-	switch args[1] {
+	switch args[0] {
 	case `trend`:
-		if len(args) != 2 {
+		if len(args) != 1 {
 			log.Fatal(fmt.Errorf(USAGE))
 		}
 		rss = getTrendRSS(client, WOEID)
-		file, err = os.Create(XML_TREND)
 	case `timeline`:
-		if len(args) != 2 {
+		if len(args) != 1 {
 			log.Fatal(fmt.Errorf(USAGE))
 		}
 		rss = getTimelineRSS(client, 200)
-		file, err = os.Create(XML_TIMELINE)
 	case `search`:
-		if len(args) != 3 {
+		if len(args) < 2 {
 			log.Fatal(fmt.Errorf(USAGE))
 		}
-		rss = getSearchRSS(client, args[2], 200)
-		file, err = os.Create(strings.Replace(XML_SEARCH, `.xml`, ``, -1) + `_` + args[2] + `.xml`)
+		rss = getSearchRSS(client, args[1], 200, args[2:])
 	default:
 		log.Fatal(fmt.Errorf(USAGE))
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer file.Close()
-	file.Write([]byte(rss.String()))
+	if len(*outOpt) == 0 {
+		fmt.Println(rss.String())
+	} else {
+		file, err := os.Create(*outOpt)
+		if err != nil {
+			log.Fatal(err)
+		}
+		_, err = file.WriteString(rss.String())
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer file.Close()
+	}
 }
