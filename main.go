@@ -12,7 +12,8 @@ import (
 )
 
 var (
-	outOpt = flag.String("o", "", "output")
+	optOutput = flag.String("o", "", "output")
+	optTag    = flag.Bool("t", false, "print only <item></item> tag rather than the full xml")
 )
 
 const (
@@ -31,7 +32,7 @@ type RSS struct {
 func (rss *RSS) String() string {
 	items := ``
 	for _, item := range rss.items {
-		items += item.String()
+		items += item.String() + "\n"
 	}
 	return fmt.Sprintf(
 		`<?xml version='1.0' encoding='UTF-8'?>
@@ -42,7 +43,9 @@ func (rss *RSS) String() string {
 <atom:link href="%s" rel="self" type="application/rss+xml"/>
 <atom:link rel="hub" href="http://pubsubhubbub.appspot.com"/>
 <description>%s</description>
-<language></language>%s</channel>
+<language></language>
+%s
+</channel>
 </rss>`, rss.title, rss.link, rss.href, rss.description, items,
 	)
 }
@@ -238,7 +241,6 @@ func main() {
 	}
 	client := getClient()
 	var rss RSS
-	var err error
 	switch args[0] {
 	case `trend`:
 		if len(args) != 1 {
@@ -258,17 +260,24 @@ func main() {
 	default:
 		log.Fatal(fmt.Errorf(USAGE))
 	}
-	if err != nil {
-		log.Fatal(err)
-	}
-	if len(*outOpt) == 0 {
-		fmt.Println(rss.String())
+
+	var s string
+	if *optTag {
+		for _, item := range rss.items {
+			s += item.String() + "\n"
+		}
 	} else {
-		file, err := os.Create(*outOpt)
+		s = rss.String()
+	}
+
+	if len(*optOutput) == 0 {
+		fmt.Println(s)
+	} else {
+		file, err := os.Create(*optOutput)
 		if err != nil {
 			log.Fatal(err)
 		}
-		_, err = file.WriteString(rss.String())
+		_, err = file.WriteString(s)
 		if err != nil {
 			log.Fatal(err)
 		}
